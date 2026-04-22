@@ -1,0 +1,42 @@
+{
+  "name": "Your Name",
+  "title": "Full Stack MERN Developer",
+  "experience": [
+    {
+      "company": "Company Name",
+      "role": "Full Stack Developer",
+      "duration": "2023 - Present",
+      "highlights": [
+        "Built scalable REST APIs with Node.js and Express",
+        "Developed React frontends with TypeScript",
+        "Managed MongoDB databases and Redis caching"
+      ]
+    }
+  ],
+  "skills": {
+    "frontend": [
+      "React",
+      "Next.js",
+      "TypeScript",
+      "HTML/CSS"
+    ],
+    "backend": [
+      "Node.js",
+      "Express",
+      "NestJS",
+      "REST APIs"
+    ],
+    "database": [
+      "MongoDB",
+      "PostgreSQL",
+      "Redis"
+    ],
+    "tools": [
+      "Git",
+      "Docker",
+      "AWS",
+      "CI/CD"
+    ]
+  },
+  "education": "Your Education"
+}

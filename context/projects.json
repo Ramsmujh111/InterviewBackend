@@ -1,0 +1,19 @@
+{
+  "projects": [
+    {
+      "name": "E-Commerce Platform",
+      "description": "Full-stack e-commerce application",
+      "tech": [
+        "React",
+        "Node.js",
+        "MongoDB",
+        "Stripe"
+      ],
+      "highlights": [
+        "Payment integration",
+        "Order management",
+        "Admin dashboard"
+      ]
+    }
+  ]
+}
