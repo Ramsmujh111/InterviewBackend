@@ -216,7 +216,7 @@ Transcript:\n${session.fullTranscript}`;
     // If user explicitly chose a vision capable model like gpt-4o, honor it.
     let analysisModel = 'gemini-flash';
     if (
-      userModel === 'gpt-4o' ||
+      userModel === 'gpt-4o-mini' ||
       userModel === 'groq-vision' ||
       userModel === 'gemini-flash'
     ) {

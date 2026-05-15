@@ -65,7 +65,7 @@ export class AiService {
             request.screenshotBase64,
           );
           break;
-        case 'gpt-4o':
+        case 'gpt-4o-mini':
           text = await this.callOpenAI(
             systemPrompt,
             userPrompt,
@@ -218,7 +218,10 @@ export class AiService {
     userPrompt: string,
     screenshotBase64?: string,
   ): Promise<string> {
-    const openai = new OpenAI({ apiKey: this.apiKeys.openai });
+    const openai = new OpenAI({ 
+      apiKey: this.apiKeys.openai,
+      baseURL: 'https://models.inference.ai.azure.com'
+    });
 
     const messages: OpenAI.ChatCompletionMessageParam[] = [
       { role: 'system', content: systemPrompt },
@@ -243,7 +246,7 @@ export class AiService {
     }
 
     const completion = await openai.chat.completions.create({
-      model: 'gpt-4o',
+      model: 'gpt-4o-mini',
       messages,
       max_tokens: 1024,
       temperature: 0.7,
@@ -290,9 +293,9 @@ export class AiService {
         available: !!this.apiKeys.gemini,
       },
       {
-        id: 'gpt-4o',
-        name: 'GPT-4o',
-        description: 'Complex Reasoning',
+        id: 'gpt-4o-mini',
+        name: 'GPT-4o-mini',
+        description: 'GitHub Models Free',
         available: !!this.apiKeys.openai,
       },
       {
