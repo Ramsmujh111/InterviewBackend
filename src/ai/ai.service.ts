@@ -31,6 +31,7 @@ export class AiService {
       openai: this.configService.get<string>('OPENAI_API_KEY') || '',
       anthropic: this.configService.get<string>('ANTHROPIC_API_KEY') || '',
       groq: this.configService.get<string>('GROQ_API_KEY') || '',
+      deepseek: this.configService.get<string>('DEEPSEEK_API_KEY') || '',
     };
   }
 
@@ -56,13 +57,20 @@ export class AiService {
           );
           break;
         case 'groq-llama':
-          text = await this.callGroq(systemPrompt, userPrompt);
+          text = await this.callGroq(systemPrompt, userPrompt, undefined, 'llama-3.3-70b-versatile');
+          break;
+        case 'groq-llama4':
+          text = await this.callGroq(systemPrompt, userPrompt, undefined, 'meta-llama/llama-4-scout-17b-16e-instruct');
+          break;
+        case 'groq-compound':
+          text = await this.callGroq(systemPrompt, userPrompt, undefined, 'compound-beta');
           break;
         case 'groq-vision':
           text = await this.callGroq(
             systemPrompt,
             userPrompt,
             request.screenshotBase64,
+            'llama-3.3-70b-versatile',
           );
           break;
         case 'gpt-4o-mini':
@@ -74,6 +82,9 @@ export class AiService {
           break;
         case 'claude-sonnet':
           text = await this.callClaude(systemPrompt, userPrompt);
+          break;
+        case 'deepseek':
+          text = await this.callDeepSeek(systemPrompt, userPrompt);
           break;
         default:
           text = await this.callGroq(systemPrompt, userPrompt);
@@ -182,25 +193,26 @@ export class AiService {
     throw new Error('Gemini API: Max retries exceeded due to rate limiting.');
   }
 
-  // ── Groq (Llama 3.3 70B text / Llama 3.2 11B Vision – FREE) ──
+  // ── Groq (OpenAI-compatible — Llama 3.3, Llama 4, Compound Beta — FREE) ──
   private async callGroq(
     systemPrompt: string,
     userPrompt: string,
     screenshotBase64?: string,
+    modelName: string = 'llama-3.3-70b-versatile',
   ): Promise<string> {
     const groq = new OpenAI({
       apiKey: this.apiKeys.groq,
       baseURL: 'https://api.groq.com/openai/v1',
     });
 
-    // Use vision model when screenshot is provided
+    // Vision not supported on Groq anymore
     if (screenshotBase64) {
       throw new Error('Groq vision models have been decommissioned. Please select Gemini for screen analysis.');
     }
 
-    // Text-only model for regular queries
+    this.logger.log(`Groq: using model '${modelName}'`);
     const completion = await groq.chat.completions.create({
-      model: 'llama-3.3-70b-versatile',
+      model: modelName,
       messages: [
         { role: 'system', content: systemPrompt },
         { role: 'user', content: userPrompt },
@@ -218,7 +230,7 @@ export class AiService {
     userPrompt: string,
     screenshotBase64?: string,
   ): Promise<string> {
-    const openai = new OpenAI({ 
+    const openai = new OpenAI({
       apiKey: this.apiKeys.openai,
       baseURL: 'https://models.inference.ai.azure.com'
     });
@@ -278,12 +290,47 @@ export class AiService {
     return textBlock ? textBlock.text : 'No response generated.';
   }
 
+  // ── DeepSeek (OpenAI-compatible API) ──
+  private async callDeepSeek(
+    systemPrompt: string,
+    userPrompt: string,
+  ): Promise<string> {
+    const deepseek = new OpenAI({
+      apiKey: this.apiKeys.deepseek,
+      baseURL: 'https://api.deepseek.com/v1',
+    });
+
+    const completion = await deepseek.chat.completions.create({
+      model: 'deepseek-chat',
+      messages: [
+        { role: 'system', content: systemPrompt },
+        { role: 'user', content: userPrompt },
+      ],
+      max_tokens: 1024,
+      temperature: 0.7,
+    });
+
+    return completion.choices[0]?.message?.content || 'No response generated.';
+  }
+
   getAvailableModels() {
     return [
       {
         id: 'groq-llama',
         name: 'Llama 3.3 70B (Groq)',
         description: 'Free + Fast',
+        available: !!this.apiKeys.groq,
+      },
+      {
+        id: 'groq-llama4',
+        name: 'Llama 4 Scout (Groq)',
+        description: 'Free + Latest',
+        available: !!this.apiKeys.groq,
+      },
+      {
+        id: 'groq-compound',
+        name: 'Compound Beta (Groq)',
+        description: 'Free + Multi-step',
         available: !!this.apiKeys.groq,
       },
       {
@@ -303,6 +350,12 @@ export class AiService {
         name: 'Claude 3.5 Sonnet',
         description: 'Clean Code',
         available: !!this.apiKeys.anthropic,
+      },
+      {
+        id: 'deepseek',
+        name: 'DeepSeek Chat',
+        description: 'Cost-effective + Smart',
+        available: !!this.apiKeys.deepseek,
       },
     ];
   }
