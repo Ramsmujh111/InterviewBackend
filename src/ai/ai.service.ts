@@ -1,15 +1,21 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { GoogleGenerativeAI, Part } from '@google/generative-ai';
+import { GoogleGenerativeAI, Part, Content } from '@google/generative-ai';
 import OpenAI from 'openai';
 import Anthropic from '@anthropic-ai/sdk';
 import { TextBlock } from '@anthropic-ai/sdk/resources/messages';
+
+export interface ChatMessage {
+  role: 'user' | 'assistant';
+  content: string;
+}
 
 export interface AiRequest {
   transcript: string;
   screenshotBase64?: string;
   resumeContext?: string;
   model: string;
+  history?: ChatMessage[];
 }
 
 export interface AiResponse {
@@ -46,6 +52,7 @@ export class AiService {
 
     const systemPrompt = this.buildSystemPrompt(request.resumeContext);
     const userPrompt = this.buildUserPrompt(request.transcript);
+    const history = request.history ?? [];
 
     try {
       switch (request.model) {
@@ -54,16 +61,17 @@ export class AiService {
             systemPrompt,
             userPrompt,
             request.screenshotBase64,
+            history,
           );
           break;
         case 'groq-llama':
-          text = await this.callGroq(systemPrompt, userPrompt, undefined, 'llama-3.3-70b-versatile');
+          text = await this.callGroq(systemPrompt, userPrompt, undefined, 'llama-3.3-70b-versatile', history);
           break;
         case 'groq-llama4':
-          text = await this.callGroq(systemPrompt, userPrompt, undefined, 'meta-llama/llama-4-scout-17b-16e-instruct');
+          text = await this.callGroq(systemPrompt, userPrompt, undefined, 'meta-llama/llama-4-scout-17b-16e-instruct', history);
           break;
         case 'groq-compound':
-          text = await this.callGroq(systemPrompt, userPrompt, undefined, 'compound-beta');
+          text = await this.callGroq(systemPrompt, userPrompt, undefined, 'compound-beta', history);
           break;
         case 'groq-vision':
           text = await this.callGroq(
@@ -71,6 +79,7 @@ export class AiService {
             userPrompt,
             request.screenshotBase64,
             'llama-3.3-70b-versatile',
+            history,
           );
           break;
         case 'gpt-4o-mini':
@@ -78,16 +87,17 @@ export class AiService {
             systemPrompt,
             userPrompt,
             request.screenshotBase64,
+            history,
           );
           break;
         case 'claude-sonnet':
-          text = await this.callClaude(systemPrompt, userPrompt);
+          text = await this.callClaude(systemPrompt, userPrompt, history);
           break;
         case 'deepseek':
-          text = await this.callDeepSeek(systemPrompt, userPrompt);
+          text = await this.callDeepSeek(systemPrompt, userPrompt, history);
           break;
         default:
-          text = await this.callGroq(systemPrompt, userPrompt);
+          text = await this.callGroq(systemPrompt, userPrompt, undefined, 'llama-3.3-70b-versatile', history);
       }
     } catch (error: unknown) {
       const errMsg = error instanceof Error ? error.message : 'Unknown error';
@@ -135,21 +145,33 @@ export class AiService {
     );
   }
 
-  // ── Gemini (with Vision support + retry logic) ──
+  // ── Gemini (with Vision support + retry logic + conversation history) ──
   private async callGemini(
     systemPrompt: string,
     userPrompt: string,
     screenshotBase64?: string,
+    history: ChatMessage[] = [],
   ): Promise<string> {
     const genAI = new GoogleGenerativeAI(this.apiKeys.gemini);
     const model = genAI.getGenerativeModel({
       model: 'gemini-flash-latest',
+      systemInstruction: systemPrompt,
     });
 
-    const parts: Part[] = [{ text: `${systemPrompt}\n\n${userPrompt}` }];
+    // Build Gemini history (must alternate user/model, skip last user which is the current prompt)
+    const geminiHistory: Content[] = [];
+    for (const msg of history) {
+      geminiHistory.push({
+        role: msg.role === 'user' ? 'user' : 'model',
+        parts: [{ text: msg.content }],
+      });
+    }
+
+    const chat = model.startChat({ history: geminiHistory });
+
+    const parts: Part[] = [{ text: userPrompt }];
 
     if (screenshotBase64) {
-      // Remove data URL prefix if present
       const base64Data = screenshotBase64.replace(
         /^data:image\/\w+;base64,/,
         '',
@@ -169,16 +191,15 @@ export class AiService {
     const maxRetries = 3;
     for (let attempt = 0; attempt <= maxRetries; attempt++) {
       try {
-        const result = await model.generateContent(parts);
-        const response = result.response;
-        return response.text();
+        const result = await chat.sendMessage(parts);
+        return result.response.text();
       } catch (error: unknown) {
         const errMsg = error instanceof Error ? error.message : String(error);
         const isRateLimit =
           errMsg.includes('429') || errMsg.includes('Too Many Requests');
 
         if (isRateLimit && attempt < maxRetries) {
-          const delayMs = Math.pow(2, attempt + 1) * 1000; // 2s, 4s, 8s
+          const delayMs = Math.pow(2, attempt + 1) * 1000;
           this.logger.warn(
             `Gemini rate limited (attempt ${attempt + 1}/${maxRetries}). ` +
             `Retrying in ${delayMs / 1000}s...`,
@@ -199,6 +220,7 @@ export class AiService {
     userPrompt: string,
     screenshotBase64?: string,
     modelName: string = 'llama-3.3-70b-versatile',
+    history: ChatMessage[] = [],
   ): Promise<string> {
     const groq = new OpenAI({
       apiKey: this.apiKeys.groq,
@@ -210,13 +232,16 @@ export class AiService {
       throw new Error('Groq vision models have been decommissioned. Please select Gemini for screen analysis.');
     }
 
+    const messages: OpenAI.ChatCompletionMessageParam[] = [
+      { role: 'system', content: systemPrompt },
+      ...history.map((m) => ({ role: m.role as 'user' | 'assistant', content: m.content })),
+      { role: 'user', content: userPrompt },
+    ];
+
     this.logger.log(`Groq: using model '${modelName}'`);
     const completion = await groq.chat.completions.create({
       model: modelName,
-      messages: [
-        { role: 'system', content: systemPrompt },
-        { role: 'user', content: userPrompt },
-      ],
+      messages,
       max_tokens: 1024,
       temperature: 0.7,
     });
@@ -229,6 +254,7 @@ export class AiService {
     systemPrompt: string,
     userPrompt: string,
     screenshotBase64?: string,
+    history: ChatMessage[] = [],
   ): Promise<string> {
     const openai = new OpenAI({
       apiKey: this.apiKeys.openai,
@@ -237,6 +263,7 @@ export class AiService {
 
     const messages: OpenAI.ChatCompletionMessageParam[] = [
       { role: 'system', content: systemPrompt },
+      ...history.map((m) => ({ role: m.role as 'user' | 'assistant', content: m.content })),
     ];
 
     if (screenshotBase64) {
@@ -271,17 +298,25 @@ export class AiService {
   private async callClaude(
     systemPrompt: string,
     userPrompt: string,
+    history: ChatMessage[] = [],
   ): Promise<string> {
     const anthropic = new Anthropic({
       apiKey: this.apiKeys.anthropic,
     });
 
-    // Note: Claude vision support would need implementation here if required
+    const claudeMessages: Anthropic.MessageParam[] = [
+      ...history.map((m) => ({
+        role: m.role as 'user' | 'assistant',
+        content: m.content,
+      })),
+      { role: 'user', content: userPrompt },
+    ];
+
     const message = await anthropic.messages.create({
       model: 'claude-3-5-sonnet-20241022',
       max_tokens: 1024,
       system: systemPrompt,
-      messages: [{ role: 'user', content: userPrompt }],
+      messages: claudeMessages,
     });
 
     const textBlock = message.content.find(
@@ -294,18 +329,22 @@ export class AiService {
   private async callDeepSeek(
     systemPrompt: string,
     userPrompt: string,
+    history: ChatMessage[] = [],
   ): Promise<string> {
     const deepseek = new OpenAI({
       apiKey: this.apiKeys.deepseek,
       baseURL: 'https://api.deepseek.com/v1',
     });
 
+    const messages: OpenAI.ChatCompletionMessageParam[] = [
+      { role: 'system', content: systemPrompt },
+      ...history.map((m) => ({ role: m.role as 'user' | 'assistant', content: m.content })),
+      { role: 'user', content: userPrompt },
+    ];
+
     const completion = await deepseek.chat.completions.create({
       model: 'deepseek-chat',
-      messages: [
-        { role: 'system', content: systemPrompt },
-        { role: 'user', content: userPrompt },
-      ],
+      messages,
       max_tokens: 1024,
       temperature: 0.7,
     });
